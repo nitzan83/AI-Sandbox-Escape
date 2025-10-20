@@ -12,7 +12,8 @@ def main(model_name: str, experiment_number: str):
     print(f"--- Starting Orchestration for Experiment {experiment_number} ---")
     
     # 1. Ensure the model is available on the host
-    host_model_path = get_model_path(model_name)
+    token_file_path = './api_keys/huggingface.txt'
+    host_model_path = get_model_path(model_name, token_file_path)
     if not host_model_path:
         print("ERROR: Orchestration failed. Model could not be found or downloaded.", file=sys.stderr)
         sys.exit(1)
@@ -20,7 +21,7 @@ def main(model_name: str, experiment_number: str):
     # 2. Define experiment-specific paths
     experiment_dir = f"containers/experiment{experiment_number}"
     dockerfile_path = os.path.join(experiment_dir, "Dockerfile")
-    host_prompt_path = os.path.abspath(os.path.join(experiment_dir, "system_prompt.md"))
+    host_prompt_path = os.path.join(experiment_dir, "system_prompt.md")
     image_tag = f"misconfig-exp-{experiment_number}:latest"
     
     if not os.path.exists(dockerfile_path) or not os.path.exists(host_prompt_path):

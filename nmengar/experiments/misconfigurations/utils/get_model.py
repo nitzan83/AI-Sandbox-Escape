@@ -15,7 +15,7 @@ def read_token_from_file(file_path: str) -> str:
         print(f"Error reading token file '{file_path}': {e}")
         return None
 
-def get_model_path(model_name: str):#, token_file_path: str) -> str:
+def get_model_path(model_name: str, token_file_path: str) -> str:
     """
     Checks if a model is present locally and downloads it if not.
 
@@ -28,7 +28,7 @@ def get_model_path(model_name: str):#, token_file_path: str) -> str:
     """
     # Define the local path for the model
     local_path = os.path.join('./models', model_name)
-    #token = read_token_from_file(token_file_path)
+    token = read_token_from_file(token_file_path)
 
     # Check if the model directory already exists
     if os.path.isdir(local_path):
@@ -44,7 +44,7 @@ def get_model_path(model_name: str):#, token_file_path: str) -> str:
             snapshot_download(
                 repo_id=model_name,
                 local_dir=local_path,
-                #token=token
+                token=token
             )
             print(f"Download complete. Model saved to '{local_path}'.")
             return local_path

@@ -1,63 +1,88 @@
 import docker
 import os
-import sys
 
-def build_image(client: docker.DockerClient, context_path: str, dockerfile_path: str, image_tag: str) -> bool:
-    """
-    Builds a Docker image from a specific Dockerfile but uses the project root as context.
-
-    Args:
-        client: The Docker client instance.
-        context_path: The build context path (should be the project root '.').
-        dockerfile_path: The relative path to the Dockerfile from the root.
-        image_tag: The tag to apply to the built image.
-
-    Returns:
-        True on success, False on failure.
-    """
+def build_image(client, context_path, dockerfile_path, image_tag):
+    """Builds a Docker image and handles errors."""
     print(f"INFO: Building Docker image '{image_tag}'...")
     try:
-        client.images.build(path=context_path, dockerfile=dockerfile_path, tag=image_tag, rm=True)
+        client.images.build(
+            path=context_path,
+            dockerfile=dockerfile_path,
+            tag=image_tag,
+            rm=True  # Remove intermediate containers
+        )
+        print(f"INFO: Successfully built image '{image_tag}'.")
         return True
     except docker.errors.BuildError as e:
-        print(f"ERROR: Docker build failed. Check the Dockerfile and context.", file=sys.stderr)
+        print(f"ERROR: Docker build failed for {image_tag}.")
+        # The build logs are often very long, so we print the last few lines
         for line in e.build_log:
             if 'stream' in line:
-                print(line['stream'].strip(), file=sys.stderr)
+                print(line['stream'].strip())
         return False
-    except TypeError:
-        print("ERROR: Docker build failed. This might be due to an issue with the Docker daemon.", file=sys.stderr)
+    except Exception as e:
+        print(f"ERROR: An unexpected error occurred during build: {e}")
         return False
 
 
-def run_container(client: docker.DockerClient, image_tag: str, host_model_path: str, host_prompt_path: str) -> str:
+# In utils/container_management.py
+
+def run_container(client, image_tag, model_path, prompt_path):
     """
-    Runs the container with specified volumes and returns the logs.
+    Runs a container with the specified model and prompt mounted as volumes.
+    Streams logs in real-time and returns them upon completion.
+
+    Args:
+        client: Docker client object.
+        image_tag (str): The tag of the image to run.
+        model_path (str): The absolute path to the model on the host.
+        prompt_path (str): The absolute path to the system prompt on the host.
 
     Returns:
-        The container logs as a string, or None on failure.
+        str: The complete logs from the container, or None if an error occurred.
     """
-    container_model_path = "/models"
-    container_prompt_path = "/app/system_prompt.md"
-
-    print(f"INFO: Running container '{image_tag}'...")
+    print(f"INFO: Running container for experiment '{image_tag}'...")
     try:
+        # --- FIX: Convert all paths to absolute paths ---
+        host_model_path = os.path.abspath(model_path)
+        host_prompt_path = os.path.abspath(prompt_path)
+        # Define the volume mounts
+        volumes = {
+            host_model_path: {'bind': '/app/models', 'mode': 'ro'},
+            host_prompt_path: {'bind': '/app/system_prompt.md', 'mode': 'ro'}
+        }
+
         container = client.containers.run(
             image_tag,
             detach=True,
-            volumes={
-                host_model_path: {'bind': container_model_path, 'mode': 'ro'},
-                host_prompt_path: {'bind': container_prompt_path, 'mode': 'ro'}
-            }
+            volumes=volumes
         )
-        # Wait for the container to finish and get the exit code
-        result = container.wait()
-        exit_code = result.get('StatusCode', -1)
-        print(f"INFO: Container finished with exit code {exit_code}.")
+
+        # --- MODIFIED LOGIC ---
+        # Create a list to store log lines
+        log_lines = []
+        print("INFO: Attaching to container logs... (This may be silent for several minutes while the model loads)")
+        for line in container.logs(stream=True, follow=True):
+            decoded_line = line.decode('utf-8').strip()
+            print(decoded_line)
+            log_lines.append(decoded_line) # Append each line to the list
         
-        logs = container.logs().decode('utf-8')
+        # Join the lines into a single string to return
+        all_logs = "\n".join(log_lines)
+        # --- END MODIFIED LOGIC ---
+
+        result = container.wait()
+        status_code = result.get('StatusCode', -1)
+        print(f"INFO: Container finished with status code: {status_code}")
+
+        print("INFO: Cleaning up container...")
         container.remove()
-        return logs
+
+        return all_logs # Return the captured logs
+
+    except docker.errors.ContainerError as e:
+        print(f"ERROR: Container run failed: {e}")
+        return None
     except Exception as e:
-        print(f"ERROR: An error occurred during container execution: {e}", file=sys.stderr)
+        print(f"ERROR: An unexpected error occurred during container run: {e}")
         return None
