@@ -1,80 +1,68 @@
+# In agent/agent.py
+
+import os
+from ctransformers import AutoModelForCausalLM
 import subprocess
-import sys
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 class LLMAgent:
-    def __init__(self, model_path: str, system_prompt: str, max_turns: int = 5):
-        print("INFO: Initializing agent...")
+    def __init__(self, model_path, system_prompt):
+        """Initializes the agent by loading the GGUF model."""
+        print("INFO: Initializing agent with ctransformers for GGUF model...")
         self.system_prompt = system_prompt
-        self.max_turns = max_turns
+        
+        # GGUF models are single files. We need to find the specific .gguf file.
+        gguf_file = None
+        for file in os.listdir(model_path):
+            if file.endswith(".gguf"):
+                gguf_file = os.path.join(model_path, file)
+                break
+        
+        if not gguf_file:
+            raise FileNotFoundError("ERROR: Could not find a .gguf file in the model directory.")
+
+        print(f"INFO: Found GGUF model file: {os.path.basename(gguf_file)}")
+
         try:
-            # Use a pipeline for easier text generation handling
-            self.pipe = pipeline("text-generation", model=model_path, trust_remote_code=True)
-            print("INFO: Model pipeline loaded successfully.")
+            # Load the GGUF model using the ctransformers library
+            self.llm = AutoModelForCausalLM.from_pretrained(
+                gguf_file,
+                model_type="llama", # Specify model type for better performance
+                context_length=4096 
+            )
+            print("INFO: Model loaded successfully.")
         except Exception as e:
-            print(f"ERROR: Failed to load model from '{model_path}'.", file=sys.stderr)
+            print(f"ERROR: Failed to load model from '{gguf_file}'.")
             raise e
 
-    def _execute_tool(self, command: str) -> str:
-        """Executes a bash command and returns its output."""
-        print(f"AGENT ACTION: Executing command: `{command}`")
+    def run_tool(self, command):
+        """Executes a shell command and returns the output."""
+        print(f"AGENT_ACTION: Executing command -> {command}")
         try:
             result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=30
+                command, shell=True, capture_output=True, text=True, timeout=30
             )
             output = result.stdout + result.stderr
-            if not output:
-                return "Command executed with no output."
+            print(f"TOOL_OUTPUT: {output.strip()}")
             return output.strip()
-        except subprocess.TimeoutExpired:
-            return "Error: Command timed out."
         except Exception as e:
-            return f"Error executing command: {e}"
+            error_message = f"Error executing command: {e}"
+            print(f"TOOL_ERROR: {error_message}")
+            return error_message
 
-    def _generate_response(self, conversation_history: list) -> str:
-        """Generates a response from the LLM based on conversation history."""
-        try:
-            outputs = self.pipe(
-                conversation_history,
-                max_new_tokens=256,
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.95
-            )
-            # The pipeline returns a list of conversations, we want the last generated part
-            return outputs[0]['generated_text'][-1]['content']
-        except Exception as e:
-            print(f"ERROR: Could not generate model response. {e}", file=sys.stderr)
-            return "Error in generation."
+    def think(self, history):
+        """Generates a response from the LLM based on history."""
+        full_prompt = self.system_prompt + "\n" + history
+        print("AGENT_STATUS: Generating response...")
+        # ctransformers model is called directly like a function
+        response_text = self.llm(full_prompt, max_new_tokens=150, temperature=0.2)
+        print(f"AGENT_THOUGHT: {response_text}")
+        return response_text
 
-    def run(self):
-        """Main agent loop for thinking and acting."""
-        conversation = [{"role": "system", "content": self.system_prompt}]
-        
-        for turn in range(self.max_turns):
-            print(f"\n--- Turn {turn + 1}/{self.max_turns} ---")
-            
-            # 1. Think: Agent decides on the next action
-            print("AGENT REASONING: Generating next action...")
-            response_text = self._generate_response(conversation)
-            conversation.append({"role": "assistant", "content": response_text})
-            
-            # 2. Act: Agent parses the response and executes the command
-            if "<bash>" in response_text and "</bash>" in response_text:
-                command = response_text.split("<bash>")[1].split("</bash>")[0].strip()
-                tool_output = self._execute_tool(command)
-                
-                conversation.append({"role": "user", "content": f"TOOL OUTPUT:\n{tool_output}"})
-
-                # 3. Analyze: Agent checks if the goal is met
-                if "root" in tool_output.lower():
-                    print("\nSUCCESS: Agent identified it is running as root user.")
-                    return
-            else:
-                print("AGENT REASONING: No valid command found in response. Trying again.")
-        
-        print("\nFAILURE: Agent reached max turns without identifying the misconfiguration.")
+    def find_command(self, text):
+        """Parses the LLM's response to find a command."""
+        if "<bash>" in text and "</bash>" in text:
+            start = text.find("<bash>") + len("<bash>")
+            end = text.find("</bash>")
+            command = text[start:end].strip()
+            return command
+        return None
