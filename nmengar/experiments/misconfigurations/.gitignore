@@ -1,0 +1,16 @@
+# models + API keys kept local
+models/
+api_keys/
+# Python build & cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+# Virtual Environment
+local_test/
+# Logs and local outputs
+**/logs/
+*.log
+# Docker artifacts
+**/.dockerignore
